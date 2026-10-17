@@ -3,7 +3,7 @@
 Backend only. Jarri's terminal panel is a client of this service.
 
 Endpoints (JSON unless noted):
-  POST   /sessions                 {cols, rows}          -> {id}
+  POST   /sessions                 {cols, rows, cwd?, command?} -> {id}
   POST   /sessions/{id}/input      raw bytes             -> 204
   POST   /sessions/{id}/resize     {cols, rows}          -> 204
   GET    /sessions/{id}/output?after=N                   -> {next, data (base64), exited}
@@ -12,6 +12,11 @@ Endpoints (JSON unless noted):
 Security: binds to 127.0.0.1 only. Requests are accepted only when the Origin
 and Host headers match an allowed list, so ordinary web pages in a browser
 cannot drive a shell. A process running as the same user can still reach it.
+
+Optional cwd (absolute, existing directory) and command (list of strings) start
+the session in that directory running that command instead of a login shell.
+The command runs through bash so PATH and aliases work. Without them the
+session is a login shell, as before.
 """
 
 import base64
@@ -47,7 +52,7 @@ ALLOWED_HOSTS = {f"{HOST}:{PORT}", f"localhost:{PORT}"}
 
 
 class Session:
-    def __init__(self, cols, rows):
+    def __init__(self, cols, rows, cwd=None, command=None):
         self.id = uuid.uuid4().hex
         self.lock = threading.Lock()
         self.chunks = []  # list of (offset, bytes)
@@ -56,9 +61,13 @@ class Session:
         master, slave = pty.openpty()
         self.master = master
         self.resize(cols, rows)
-        shell = os.environ.get("SHELL", "/bin/bash")
+        if command:
+            argv = ["bash", "-ic", 'exec "$@"', "_", *command]
+        else:
+            argv = [os.environ.get("SHELL", "/bin/bash"), "-l"]
         self.proc = subprocess.Popen(
-            [shell, "-l"],
+            argv,
+            cwd=cwd,
             stdin=slave, stdout=slave, stderr=slave,
             start_new_session=True,
             env={**os.environ, "TERM": "xterm-256color"},
@@ -167,7 +176,15 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/sessions":
             req = json.loads(self._body() or b"{}")
-            session = Session(int(req.get("cols", 80)), int(req.get("rows", 24)))
+            cwd = req.get("cwd")
+            command = req.get("command")
+            if cwd is not None and not (isinstance(cwd, str) and os.path.isabs(cwd) and os.path.isdir(cwd)):
+                return self._send(400, {"error": "cwd must be an existing absolute directory"})
+            if command is not None and not (
+                isinstance(command, list) and command and all(isinstance(arg, str) for arg in command)
+            ):
+                return self._send(400, {"error": "command must be a non-empty list of strings"})
+            session = Session(int(req.get("cols", 80)), int(req.get("rows", 24)), cwd, command)
             with SESSIONS_LOCK:
                 SESSIONS[session.id] = session
             return self._send(200, {"id": session.id})
