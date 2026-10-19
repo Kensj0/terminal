@@ -1,6 +1,6 @@
-"""Jarri terminal service: runs shell sessions for Jarri Workspace over localhost HTTP.
+"""Terminal: runs shell sessions over localhost HTTP.
 
-Backend only. Jarri's terminal panel is a client of this service.
+Runs on its own with `python3 server.py`. Any client can use it, a panel in Jarri is optional.
 
 Endpoints (JSON unless noted):
   POST   /sessions                 {cols, rows, cwd?, command?} -> {id}
@@ -232,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"jarri terminal service on http://{HOST}:{PORT}", file=sys.stderr)
+    print(f"terminal service on http://{HOST}:{PORT}", file=sys.stderr)
     server.serve_forever()
 
 
